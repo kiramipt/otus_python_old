@@ -8,6 +8,6 @@ Examples of config params:
 * **REPORT_DIR**: path to directory with report files (default="./reports")
 * **REPORT_SIZE**: size of report, render statistics only for top n urls (default=10)
 * **LOG_FILE**: path to script logging file (default=None)
-* **ERRORS_LIMIT**: percentage of errors which we allow when parsing log files (default=0.64)
+* **ERRORS_LIMIT**: percentage of errors which we can allow when parsing log files (default=0.64)
 
 To run unittest use: ```python test_log_anayzer.py```
