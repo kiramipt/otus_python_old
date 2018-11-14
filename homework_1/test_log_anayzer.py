@@ -29,7 +29,7 @@ test_answer_1 = [
 
 def create_file_and_write_several_lines(path, lines, compress=None):
     """
-    Create file and write in it data
+    Create file and write it in data
 
     :param path: path to file
     :param lines: data which we write in it
@@ -40,9 +40,9 @@ def create_file_and_write_several_lines(path, lines, compress=None):
     openers_map = {"gz": gzip.GzipFile, "bz2": bz2.BZ2File, None: open}
     opener = openers_map.get(compress, open)
     compressed_path = "%s.%s" % (path, compress) if compress else path
-    with opener(compressed_path, "wb") as fp:
+    with opener(compressed_path, "wb") as f:
         for line in lines:
-            fp.write(line.encode('ascii'))
+            f.write(line.encode('ascii'))
 
 
 def set_up_test_files():
