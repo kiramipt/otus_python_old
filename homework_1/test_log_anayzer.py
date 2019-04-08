@@ -29,7 +29,7 @@ test_answer_1 = [
 
 def create_file_and_write_several_lines(path, lines, compress=None):
     """
-    Create file and write it in data
+    Create file and write in it data
 
     :param path: path to file
     :param lines: data which we write in it
@@ -40,14 +40,15 @@ def create_file_and_write_several_lines(path, lines, compress=None):
     openers_map = {"gz": gzip.GzipFile, "bz2": bz2.BZ2File, None: open}
     opener = openers_map.get(compress, open)
     compressed_path = "%s.%s" % (path, compress) if compress else path
-    with opener(compressed_path, "wb") as f:
+    with opener(compressed_path, "wb") as fp:
         for line in lines:
-            f.write(line.encode('ascii'))
+            fp.write(line.encode('ascii'))
 
 
 def set_up_test_files():
     """
     Create all files that we need for tests
+
     :return: test cases directories
     """
 
@@ -210,8 +211,8 @@ class TestAnalyzer(unittest.TestCase):
 
         # check that log file has info msg
         self.assertTrue(
-            data.find('Not founded log files') != -1,
-            msg="Not rises info msg: 'Not founded log files'"
+            data.find('Not found log files') != -1,
+            msg="Not rises info msg: 'Not found log files'"
         )
 
     def test_case_3_rise_current_report_is_uptodate(self):
