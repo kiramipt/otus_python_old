@@ -26,6 +26,8 @@ DEFAULT_CONFIG = {
     "ERRORS_LIMIT": 0.64
 }
 
+DEFAULT_CONFIG_PATH = './config.json'
+
 FILE_NAME_REGEXP = re.compile(r"^nginx-access-ui\.log-(\d{8})(\.gz)?$")
 
 NGINX_LOG_FORMAT_REGEXP = re.compile(
@@ -261,15 +263,14 @@ if __name__ == "__main__":
 
     # create parser for config file path
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', help='path to config file')
+    parser.add_argument('--config', help='path to config file', default=DEFAULT_CONFIG_PATH)
     args = parser.parse_args()
 
     # update configs if we get config file path
     config = copy.deepcopy(DEFAULT_CONFIG)
-    if args.config:
-        with open(args.config) as f:
-            external_config = json.load(f)
-            config.update(external_config)
+    with open(args.config) as f:
+        external_config = json.load(f)
+        config.update(external_config)
 
     setup_logging(config['LOG_FILE'])
 
