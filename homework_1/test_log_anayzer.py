@@ -8,7 +8,7 @@ import gzip
 import bz2
 
 import logging
-import log_analyzer
+import log_analyzer as log_analyzer
 
 test_log_1 = """0.0.0.0 -  - [] "GET /api1 HTTP/1.1" 200 927 "-" "-" "-" "-" "-" 1
 0.0.0.0 -  - [] "GET /api1 HTTP/1.1" 200 927 "-" "-" "-" "-" "-" 1.4
@@ -211,8 +211,8 @@ class TestAnalyzer(unittest.TestCase):
 
         # check that log file has info msg
         self.assertTrue(
-            data.find('Not found log files') != -1,
-            msg="Not rises info msg: 'Not found log files'"
+            data.find('Log file was not founded') != -1,
+            msg="Not rises info msg: 'Log file was not founded'"
         )
 
     def test_case_3_rise_current_report_is_uptodate(self):

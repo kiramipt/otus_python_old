@@ -6,14 +6,17 @@ import re
 
 import gzip
 import logging
-import traceback
 
 import argparse
 import json
 import datetime
 
+import copy
+
 from statistics import median
 from string import Template
+
+from collections import namedtuple
 
 DEFAULT_CONFIG = {
     "REPORT_SIZE": 10,
@@ -22,6 +25,19 @@ DEFAULT_CONFIG = {
     "LOG_FILE": None,
     "ERRORS_LIMIT": 0.64
 }
+
+FILE_NAME_REGEXP = re.compile(r"^nginx-access-ui\.log-(\d{8})(\.gz)?$")
+
+NGINX_LOG_FORMAT_REGEXP = re.compile(
+    r'(?P<ipaddress>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(?P<remote_user>.*?)\s+'
+    r'(?P<http_x_real_ip>.*?)\s+\[(?P<time_local>.*?)\]\s+\"(?P<request_method>.*?)\s+'
+    r'(?P<path>.*?)(?P<request_version>\s+HTTP/.*)?\"\s+(?P<status>.*?)\s+'
+    r'(?P<body_bytes_sent>.*?)\s+\"(?P<http_referer>.*?)\"\s+\"(?P<user_agent>.*?)\"\s+'
+    r'\"(?P<http_x_forwarded_for>.*?)\"\s+\"(?P<http_X_REQUEST_ID>.*?)\"\s+'
+    r'\"(?P<http_X_RB_USER>.*)\"\s+(?P<request_time>\d+\.?\d*)'
+)
+
+CUR_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def setup_logging(log_file):
@@ -45,37 +61,83 @@ def find_last_log_file(dir_path):
 
     :param dir_path: dir path in which we search log files
     :type dir_path: str
-    :return: return tuple with file_path to last log file, date for this file and log file extension
-    :rtype: tuple
+    :return: return file_name of last log file
+    :rtype: str
     """
 
-    # file regexp pattern
-    pattern_str = re.compile(r"^nginx-access-ui\.log-(\d{8})(\.gz)?$")
-    pattern = re.compile(pattern_str)
-
-    # find last log file in log_dir
     last_log_file_name = ''
     last_log_date = ''
-    file_extension = ''
 
     # try to find last log file
     for file_name in os.listdir(dir_path):
-        if pattern.match(file_name):
+        if re.match(FILE_NAME_REGEXP, file_name):
 
-            log_date = re.search(pattern_str, file_name).group(1)
+            log_date = re.search(FILE_NAME_REGEXP, file_name).groups()[0]
             if log_date > last_log_date:
                 last_log_date = log_date
-                last_log_file_name = os.path.join(dir_path, file_name)
+                last_log_file_name = file_name
 
-    # if we find last log file then extract its extension and log date
-    if last_log_file_name:
-        last_log_date = datetime.datetime.strptime(last_log_date, '%Y%m%d').date()
-        if last_log_file_name.endswith('.gz'):
-            file_extension = 'gz'
-        else:
-            file_extension = 'plain'
+    return last_log_file_name
 
-    return last_log_file_name, last_log_date, file_extension
+
+def extract_file_info(file_name):
+    """
+    Extract file info (date and extension)
+
+    :param file_name: name of file in which we extract info
+    :type file_name: str
+    :return: return namedtuple with file_path of file, date for this file and file extension
+    :rtype: namedtuple
+    """
+
+    file_date = re.search(FILE_NAME_REGEXP, file_name).groups()[0]
+    try:
+        file_date = datetime.datetime.strptime(file_date, '%Y%m%d').date()
+    except ValueError:
+        raise Exception('Not correct time format: {0}. Expected: %Y%m%d'.format(file_date))
+
+    file_extension = 'gz' if file_name.endswith('.gz') else 'plain'
+
+    # namedtuple for quick access for log info
+    LogInfo = namedtuple('LogInfo', [
+        'file_name',
+        'date',
+        'extension'
+    ])
+
+    return LogInfo(file_name, file_date, file_extension)
+
+
+def process_line(line):
+    """
+    Process one line of log file.
+
+    :param line: log line
+    :type line: str
+    :return: tuple with route and request_time if line match to regexp
+    :rtype: tuple or None
+    """
+
+    result = NGINX_LOG_FORMAT_REGEXP.match(line)
+    if result:
+        url, request_time = result.group('path'), float(result.group('request_time'))
+        return url, request_time
+
+
+def parse_log(file_path, file_extension):
+    """
+    Return one line of log at time
+
+    :param file_path: path to file with logs
+    :type file_path: str
+    :param file_extension: extension of file with logs
+    :type file_extension: str
+    """
+
+    file_open = gzip.open if file_extension == 'gz' else open
+    with file_open(file_path, 'rt') as f:
+        for line in f:
+            yield line
 
 
 def calculate_statistics(file_path, file_extension, errors_limit=None):
@@ -92,19 +154,23 @@ def calculate_statistics(file_path, file_extension, errors_limit=None):
     :rtype: dict
     """
 
-    # if file have extension .gz then use appropriate open function
-    if file_extension == 'gz':
-        file_open = gzip.open
-    else:
-        file_open = open
+    total = processed = processed_request_time = 0
+    statistics = {}
 
-    # read file with logs and collect raw statistics
-    with file_open(file_path, 'rt') as f:
-        statistics = get_raw_statistics(f, errors_limit)
+    for line in parse_log(file_path, file_extension):
+        parsed_line = process_line(line)
+        total += 1
+        if parsed_line:
+            processed += 1
+            url, request_time = parsed_line
+            statistics.setdefault(url, []).append(request_time)
+            processed_request_time += request_time
 
-    # calculate general statistics for all urls
-    all_count = sum(len(data) for data in statistics.values())
-    all_time_sum = sum(sum(data) for data in statistics.values())
+    if errors_limit is not None and total > 0 and (total - processed) / total > errors_limit:
+        raise Exception('Errors limit exceed')
+
+    all_count = processed
+    all_time_sum = processed_request_time
 
     # calculate enriched_ statistics for html report
     enriched_statistics = {}
@@ -129,44 +195,6 @@ def calculate_statistics(file_path, file_extension, errors_limit=None):
         }
 
     return enriched_statistics
-
-
-def get_raw_statistics(f, errors_limit):
-    """
-    Get raw statistics to each unique url from file
-
-    :param f: file_handler
-    :type f: TextIOWrapper
-    :param errors_limit: error percent that critical to statistics
-    :type errors_limit: float
-    :return: dict with raw statistics
-    :rtype: dict
-    """
-
-    statistics = {}
-    errors = 0
-    records = 0
-    for line in f:
-
-        url_break = line.split('] "')
-        records += 1
-        errors += 1
-
-        try:
-            if len(url_break) == 2:
-                url_break = url_break[1].split('"')[0].split()
-                if len(url_break) == 3:
-                    url = url_break[1]
-                    request_time = float(line.split()[-1])
-                    statistics.setdefault(url, []).append(request_time)
-                    errors -= 1
-        except:
-            pass
-
-    if errors_limit is not None and records > 0 and errors / records > errors_limit:
-        raise Exception('Errors limit exceed')
-
-    return statistics
 
 
 def render_template(template_file_path, report_file_path, statistics):
@@ -199,27 +227,33 @@ def main(config):
     :type config: dict
     """
 
-    # search path to last log file
-    last_log_file_path, last_log_date, last_log_file_extension = find_last_log_file(config['LOG_DIR'])
-    if not last_log_file_path:
-        logging.info('Not found log files')
+    last_log_file_name = find_last_log_file(config['LOG_DIR'])
+    if not last_log_file_name:
+        logging.exception('Log file was not founded')
         return
 
-    # report file checking
-    report_file_name = 'report-{0}.html'.format(last_log_date.strftime('%Y.%m.%d'))
+    last_log_info = extract_file_info(last_log_file_name)
+
+    report_file_name = 'report-{0}.html'.format(last_log_info.date.strftime('%Y.%m.%d'))
+
+    if not os.path.isdir(config['REPORT_DIR']):
+        logging.exception("Directory {0} doesn't exist".format(config['REPORT_DIR']))
+        return
+
     report_file_path = os.path.join(config['REPORT_DIR'], report_file_name)
     template_file_path = os.path.join(config['REPORT_DIR'], 'report.html')
 
-    # if file already exist than exit
     if os.path.isfile(report_file_path):
         logging.info('Current report is up-to-date')
         return
 
-    # calculate statistics
-    statistics = calculate_statistics(last_log_file_path, last_log_file_extension, config['ERRORS_LIMIT'])
+    statistics = calculate_statistics(
+        os.path.join(config['LOG_DIR'], last_log_info.file_name),
+        last_log_info.extension,
+        config['ERRORS_LIMIT']
+    )
     top_statistics = sorted(statistics.values(), key=lambda x: x['time_sum'], reverse=True)[:config['REPORT_SIZE']]
 
-    # render template
     render_template(template_file_path, report_file_path, top_statistics)
 
 
@@ -231,7 +265,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # update configs if we get config file path
-    config = DEFAULT_CONFIG
+    config = copy.deepcopy(DEFAULT_CONFIG)
     if args.config:
         with open(args.config) as f:
             external_config = json.load(f)
@@ -242,5 +276,4 @@ if __name__ == "__main__":
     try:
         main(config)
     except:
-        error_text = traceback.format_exc()
-        logging.error(error_text)
+        logging.exception('Exception in main function')
