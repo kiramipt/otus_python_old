@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
 
 DEFAULT_CONFIG_PATH = './config.json'
 
-FILE_NAME_REGEXP = re.compile(r"^nginx-access-ui\.log-(\d{8})(\.gz)?$")
+FILE_NAME_REGEXP = re.compile(r"^nginx-access-ui\.log-(?P<date>\d{8})(\.gz)?$")
 
 NGINX_LOG_FORMAT_REGEXP = re.compile(
     r'(?P<ipaddress>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(?P<remote_user>.*?)\s+'
@@ -68,14 +68,18 @@ def find_last_log_file(dir_path):
     """
 
     last_log_file_name = ''
-    last_log_date = ''
-
     # try to find last log file
     for file_name in os.listdir(dir_path):
-        if re.match(FILE_NAME_REGEXP, file_name):
+        match = re.match(FILE_NAME_REGEXP, file_name)
 
-            log_date = re.search(FILE_NAME_REGEXP, file_name).groups()[0]
-            if log_date > last_log_date:
+        if match:
+            log_date = match.groupdict()['date']
+            try:
+                log_date = datetime.datetime.strptime(log_date, '%Y%m%d').date()
+            except ValueError:
+                continue
+
+            if not last_log_file_name or log_date > last_log_date:
                 last_log_date = log_date
                 last_log_file_name = file_name
 
