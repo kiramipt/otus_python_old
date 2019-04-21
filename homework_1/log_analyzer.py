@@ -63,11 +63,22 @@ def find_last_log_file(dir_path):
 
     :param dir_path: dir path in which we search log files
     :type dir_path: str
-    :return: return file_name of last log file
-    :rtype: str
+    :return: return last_log_info, namedtuple with file_path and date of last log
+    :rtype: collections.namedtuple
     """
 
-    last_log_file_name = ''
+    if not os.path.isdir(dir_path):
+        logging.info('Log directory was not founded')
+        return
+
+    last_log_info = None
+
+    # namedtuple for quick access for log info
+    LogInfo = namedtuple('LogInfo', [
+        'file_path',
+        'date',
+    ])
+
     # try to find last log file
     for file_name in os.listdir(dir_path):
         match = re.match(FILE_NAME_REGEXP, file_name)
@@ -79,39 +90,10 @@ def find_last_log_file(dir_path):
             except ValueError:
                 continue
 
-            if not last_log_file_name or log_date > last_log_date:
-                last_log_date = log_date
-                last_log_file_name = file_name
+            if not last_log_info or log_date > last_log_info.date:
+                last_log_info = LogInfo(os.path.join(dir_path, file_name), log_date)
 
-    return last_log_file_name
-
-
-def extract_file_info(file_name):
-    """
-    Extract file info (date and extension)
-
-    :param file_name: name of file in which we extract info
-    :type file_name: str
-    :return: return namedtuple with file_path of file, date for this file and file extension
-    :rtype: namedtuple
-    """
-
-    file_date = re.search(FILE_NAME_REGEXP, file_name).groups()[0]
-    try:
-        file_date = datetime.datetime.strptime(file_date, '%Y%m%d').date()
-    except ValueError:
-        raise Exception('Not correct time format: {0}. Expected: %Y%m%d'.format(file_date))
-
-    file_extension = 'gz' if file_name.endswith('.gz') else 'plain'
-
-    # namedtuple for quick access for log info
-    LogInfo = namedtuple('LogInfo', [
-        'file_name',
-        'date',
-        'extension'
-    ])
-
-    return LogInfo(file_name, file_date, file_extension)
+    return last_log_info
 
 
 def process_line(line):
@@ -130,30 +112,28 @@ def process_line(line):
         return url, request_time
 
 
-def parse_log(file_path, file_extension):
+def parse_log(file_path):
     """
     Return one line of log at time
 
     :param file_path: path to file with logs
     :type file_path: str
-    :param file_extension: extension of file with logs
-    :type file_extension: str
     """
 
-    file_open = gzip.open if file_extension == 'gz' else open
+    file_open = gzip.open if file_path.endswith('.gz') else open
     with file_open(file_path, 'rt') as f:
         for line in f:
-            yield line
+            yield process_line(line)
 
 
-def calculate_statistics(file_path, file_extension, errors_limit=None):
+def calculate_statistics(file_path, log_parser, errors_limit=None):
     """
     Calculate statistics using data from file
 
     :param file_path: path to file with logs
     :type file_path: str
-    :param file_extension: extension of file with logs
-    :type file_extension: str
+    :param log_parser: log file parser
+    :type log_parser: function
     :param errors_limit: error percent that critical to statistics
     :type errors_limit: float
     :return: dictionary with statistics by each unique url
@@ -163,8 +143,7 @@ def calculate_statistics(file_path, file_extension, errors_limit=None):
     total = processed = processed_request_time = 0
     statistics = {}
 
-    for line in parse_log(file_path, file_extension):
-        parsed_line = process_line(line)
+    for parsed_line in log_parser(file_path):
         total += 1
         if parsed_line:
             processed += 1
@@ -233,18 +212,16 @@ def main(config):
     :type config: dict
     """
 
-    last_log_file_name = find_last_log_file(config['LOG_DIR'])
-    if not last_log_file_name:
+    last_log_info = find_last_log_file(config['LOG_DIR'])
+    if not last_log_info:
         logging.exception('Log file was not founded')
         return
-
-    last_log_info = extract_file_info(last_log_file_name)
 
     report_file_name = 'report-{0}.html'.format(last_log_info.date.strftime('%Y.%m.%d'))
 
     if not os.path.isdir(config['REPORT_DIR']):
-        logging.exception("Directory {0} doesn't exist".format(config['REPORT_DIR']))
-        return
+        os.makedirs(config['REPORT_DIR'])
+        logging.info("Create report directory {0} because it doesn't exist.".format(config['REPORT_DIR']))
 
     report_file_path = os.path.join(config['REPORT_DIR'], report_file_name)
     template_file_path = os.path.join(config['REPORT_DIR'], 'report.html')
@@ -254,11 +231,15 @@ def main(config):
         return
 
     statistics = calculate_statistics(
-        os.path.join(config['LOG_DIR'], last_log_info.file_name),
-        last_log_info.extension,
+        last_log_info.file_path,
+        parse_log,
         config['ERRORS_LIMIT']
     )
     top_statistics = sorted(statistics.values(), key=lambda x: x['time_sum'], reverse=True)[:config['REPORT_SIZE']]
+
+    if not os.path.isfile(template_file_path):
+        logging.info("Template file {0} doesn't exist".format(template_file_path))
+        return
 
     render_template(template_file_path, report_file_path, top_statistics)
 
