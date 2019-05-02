@@ -1,17 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import argparse
+
 import json
 import datetime
 import logging
 import hashlib
 import uuid
-
-import re
-
-from optparse import OptionParser
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from abc import ABCMeta, abstractmethod
+from scoring import get_interests, get_score
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -39,7 +38,7 @@ GENDERS = {
 }
 
 
-class Field(metaclass=ABCMeta):
+class BaseField(metaclass=ABCMeta):
     """
     Abstract class for field validating
     """
@@ -47,11 +46,16 @@ class Field(metaclass=ABCMeta):
     def __init__(self, required=False, nullable=False):
         self.required = required
         self.nullable = nullable
+        self._value = None
 
     @abstractmethod
-    def validate(self, value, valid_type=()):
+    def validate(self, value, valid_type_list=()):
         """
         Validate field value
+
+        :param value: value which we want to validate
+        :param valid_type_list: if it not empty, than at least for one type should be: isinstance(value, type) == True
+        :type valid_type_list: tuple
         """
         # check if value is None and field is required
         if (value is None) and (self.required is True):
@@ -61,13 +65,35 @@ class Field(metaclass=ABCMeta):
         if (bool(value) is False) and (self.nullable is False):
             raise ValueError(f"Field must be not nullable: '{value}'")
 
-        # check if field type in valid_type_list
-        checked_valid_type_list = [isinstance(value, _type) for _type in valid_type]
-        if len(checked_valid_type_list) != 0 and sum(checked_valid_type_list) == 0:
-            raise TypeError(f"Field must be in {valid_type}. Your type is: {type(value)}")
+        # check if field type in valid_type
+        if value is not None:
+            checked_valid_type = [isinstance(value, _type) for _type in valid_type_list]
+            if len(checked_valid_type) != 0 and sum(checked_valid_type) == 0:
+                raise TypeError(f"Field must be in {valid_type_list}. Your type is: {type(value)}")
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, value):
+        self._value = value
+
+    @property
+    def is_valid(self):
+        """
+        Check that field value is valid
+        """
+        try:
+            self.validate(self._value)
+        except:
+            is_valid_value = 0
+        else:
+            is_valid_value = 1
+        return is_valid_value
 
 
-class CharField(Field):
+class CharBaseField(BaseField):
     """
     Validate char field
 
@@ -75,42 +101,12 @@ class CharField(Field):
     * be field
     * be instance of str
     """
+
     def validate(self, value, valid_type_list=()):
-        # call parent validate method
-        super().validate(value, valid_type=(str))
+        super().validate(value, valid_type_list=(str,))
 
 
-class ArgumentsField(Field):
-    """
-    Validate arguments field
-
-    Arguments field value should:
-    * be field
-    * be instance of dict
-    """
-    def validate(self, value, valid_type_list=()):
-        # call parent validate method
-        super().validate(value, valid_type=(dict,))
-
-
-class EmailField(CharField):
-    """
-    Validate email field
-
-    Email field value should:
-    * be char field
-    * contain '@' symbol
-    """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
-        super().validate(value)
-
-        # validate email
-        if '@' not in value:
-            raise ValueError(f"Not correct email address, should contain '@' symbol: '{value}'")
-
-
-class PhoneField(Field):
+class PhoneBaseField(BaseField):
     """
     Validate phone field
 
@@ -119,16 +115,43 @@ class PhoneField(Field):
     * consist of 11 digits
     * start with 7
     """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
-        super().validate(value, valid_type=(str, int))
 
-        # check that value look like phone number
-        if not str(value).startswith("7") and len(value) == 11:
+    def validate(self, value, valid_type_list=()):
+        super().validate(value, valid_type_list=(str, int))
+
+        # if value is nullable
+        if not value:
+            return
+
+        # check that value looks like phone number
+        is_phone_valid = str(value).startswith("7") and len(str(value)) == 11
+        if not is_phone_valid:
             raise ValueError(f"Not correct phone number, should be 11 digits and start with 7: '{value}'")
 
 
-class DateField(CharField):
+class EmailField(CharBaseField):
+    """
+    Validate email field
+
+    Email field value should:
+    * be char field
+    * contain '@' symbol
+    """
+
+    def validate(self, value, valid_type_list=()):
+        super().validate(value)
+
+        # if value is nullable
+        if not value:
+            return
+
+        # validate email
+        is_email_valid = '@' in value
+        if not is_email_valid:
+            raise ValueError(f"Not correct email address, email should contain '@' symbol: '{value}'")
+
+
+class DateField(CharBaseField):
     """
     Validate date field
 
@@ -136,15 +159,24 @@ class DateField(CharField):
     * be a char field
     * match to 'DD.MM.YYYY' format
     """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
+
+    def validate(self, value, valid_type_list=()):
         super().validate(value)
 
-        # check that value is in date format
+        # if value is nullable
+        if not value:
+            return
+
+        # check that value is in right date format
         try:
             datetime.datetime.strptime(value, '%d.%m.%Y')
         except ValueError:
-            raise ValueError(f"Incorrect data format, should be 'DD.MM.YYYY': {value}")
+            is_date_valid = False
+        else:
+            is_date_valid = True
+
+        if not is_date_valid:
+            raise ValueError(f"Incorrect date format, should be 'DD.MM.YYYY': {value}")
 
 
 class BirthDayField(DateField):
@@ -155,20 +187,26 @@ class BirthDayField(DateField):
     * be a date field
     * be less then 70 years and greater than 0
     """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
+
+    def validate(self, value, valid_type_list=()):
         super().validate(value)
+
+        # if value is nullable
+        if not value:
+            return
 
         # check birthday
         birthday_datetime = datetime.datetime.strptime(value, '%d.%m.%Y')
         current_datetime = datetime.datetime.now()
         age_in_years = (current_datetime - birthday_datetime).days / 365
-        if age_in_years <= 0 or age_in_years >= 70:
+        is_birthday_valid = (0 <= age_in_years <= 70)
+
+        if not is_birthday_valid:
             raise ValueError(f"Incorrect birthday date, should be not greater than 70 "
                              f"and greater than 0: {age_in_years}")
 
 
-class GenderField(Field):
+class GenderBaseField(BaseField):
     """
     Validate gender field
 
@@ -177,76 +215,219 @@ class GenderField(Field):
     * be integer
     * be in [0, 1, 2]: unknown - 0, male - 1, female - 2
     """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
-        super().validate(value, valid_type=(int,))
+
+    def validate(self, value, valid_type_list=()):
+        super().validate(value, valid_type_list=(int,))
+
+        # if value is nullable
+        if not value:
+            return
 
         # check gender values
-        if value not in [0, 1, 2]:
+        is_gender_valid = value in GENDERS
+
+        if not is_gender_valid:
             raise ValueError(f"Incorrect gender, should be in [0, 1, 2]: {value}")
 
 
-class ClientIDsField(Field):
+class ArgumentsBaseField(BaseField):
+    """
+    Validate arguments field
+
+    Arguments field value should:
+    * be field
+    * be instance of dict
+    """
+
+    def validate(self, value, valid_type_list=()):
+        super().validate(value, valid_type_list=(dict,))
+
+
+class ClientIDsBaseField(BaseField):
     """
     Validate client_ids field
 
     ClientIDs field value should:
     * be a field
     * be array of integers
-    * be non empty
     """
-    def validate(self, value, valid_type=()):
-        # call parent validate method
-        super().validate(value, valid_type=(list, tuple))
 
-        # check that array is non empty
+    def validate(self, value, valid_type=()):
+        super().validate(value, valid_type_list=(list, tuple))
+
+        # if value is nullable
         if not value:
-            raise ValueError(f"Incorrect client_ids, should be non empty array: {value}")
+            return
 
         # check that all values in array is integers
-        if not all(isinstance(v, int) for v in value):
+        is_client_ids_valid = all(isinstance(v, int) for v in value)
+
+        if not is_client_ids_valid:
             raise ValueError(f"Incorrect client_ids, should be list of integers: {value}")
 
 
-class ClientsInterestsRequest:
-    client_ids = ClientIDsField(required=True)
+class BaseRequest:
+    """
+    Base class for request initialisation and validation
+    """
+
+    fields = {}
+    errors = ''
+    is_valid = 1
+
+    def __init__(self, arguments):
+
+        for field_name, field in self.fields.items():
+            if field_name in arguments:
+                field.value = arguments[field_name]
+            else:
+                field.value = None
+
+    def validate(self):
+        errors = []
+        for field_name, field in self.fields.items():
+            if not field.is_valid:
+                errors.append(field_name + ' argument is incorrect.')
+
+        if errors:
+            self.errors = ' '.join(errors)
+            self.is_valid = 0
+
+
+class ClientsInterestsRequest(BaseRequest):
+    """
+    Class for calling get interests api
+    """
+
+    client_ids = ClientIDsBaseField(required=True, nullable=False)
     date = DateField(required=False, nullable=True)
 
+    fields = {
+        'client_ids': client_ids,
+        'date': date
+    }
 
-class OnlineScoreRequest:
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
+    def get_response(self, store, is_admin):
+
+        result = {}
+        for cid in self.client_ids.value:
+            result[str(cid)] = get_interests(store, cid)
+
+        return result
+
+
+class OnlineScoreRequest(BaseRequest):
+    """
+    Class for calling online score api
+    """
+
+    first_name = CharBaseField(required=False, nullable=True)
+    last_name = CharBaseField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
+    phone = PhoneBaseField(required=False, nullable=True)
     birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
+    gender = GenderBaseField(required=False, nullable=True)
+
+    fields = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "phone": phone,
+        "birthday": birthday,
+        "gender": gender
+    }
+
+    needed_pairs = [
+        [phone, email],
+        [first_name, last_name],
+        [gender, birthday]
+    ]
+
+    def validate(self):
+        super().validate()
+        is_anyone_pair_is_not_nullable = False
+        for field_1, field_2 in self.needed_pairs:
+            if field_1.value is not None and field_2.value is not None:
+                is_anyone_pair_is_not_nullable = True
+
+        if not is_anyone_pair_is_not_nullable:
+            self.is_valid = 0
+            self.errors += 'There is no required pair of values'
+
+    def get_response(self, store, is_admin):
+
+        if is_admin:
+            result = 42
+        else:
+            result = get_score(
+                store,
+                self.phone.value,
+                self.email.value,
+                self.birthday.value,
+                self.gender.value,
+                self.first_name.value,
+                self.last_name.value
+            )
+
+        return {"score": result}
 
 
-class MethodRequest:
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
+class MethodRequest(BaseRequest):
+    """
+    Class for request initialisation
+    """
+
+    account = CharBaseField(required=False, nullable=True)
+    login = CharBaseField(required=True, nullable=True)
+    token = CharBaseField(required=True, nullable=True)
+    arguments = ArgumentsBaseField(required=True, nullable=True)
+    method = CharBaseField(required=True, nullable=False)
+
+    fields = {
+        'account': account,
+        'login': login,
+        'token': token,
+        'arguments': arguments,
+        'method': method
+    }
 
     @property
     def is_admin(self):
-        return self.login == ADMIN_LOGIN
+        return self.login.value == ADMIN_LOGIN
 
 
-def check_auth(request):
-    if request.is_admin:
-        digest = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).hexdigest()
-    else:
-        digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
-    if digest == request.token:
-        return True
-    return False
+def method_handler(request, context, store):
+    """
+    Function for request handling. Used for arguments validating and results returning.
+    """
 
+    handlers = {
+        "online_score": OnlineScoreRequest,
+        "clients_interests": ClientsInterestsRequest
+    }
 
-def method_handler(request, ctx, store):
-    response, code = None, None
-    return response, code
+    # validate MethodRequest args
+    methodrequest = MethodRequest(request["body"])
+    methodrequest.validate()
+    if not methodrequest.is_valid:
+        return methodrequest.errors, INVALID_REQUEST
+
+    # validate auth
+    if not check_auth(methodrequest):
+        return ERRORS[FORBIDDEN], FORBIDDEN
+
+    # check if method exists
+    if methodrequest.method.value not in handlers:
+        msg = f"Method {methodrequest.method.value} is not defined"
+        return msg, NOT_FOUND
+
+    # validate handler args
+    handler = handlers[methodrequest.method.value](request["body"].get("arguments", {}))
+    handler.validate()
+    if not handler.is_valid:
+        return handler.errors, INVALID_REQUEST
+
+    return handler.get_response(store, methodrequest.is_admin), OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
@@ -262,6 +443,8 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         response, code = {}, OK
         context = {"request_id": self.get_request_id(self.headers)}
         request = None
+        data_string = ''
+
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(data_string)
@@ -289,21 +472,39 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
         context.update(r)
         logging.info(context)
-        self.wfile.write(json.dumps(r))
+        self.wfile.write(json.dumps(r).encode())
         return
 
 
+def check_auth(request):
+
+    if request.is_admin:
+        msg = datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT
+    else:
+        msg = request.account.value + request.login.value + SALT
+
+    digest = hashlib.sha512(msg.encode('utf-8')).hexdigest()
+    if digest == request.token.value:
+        return True
+    return False
+
+
 if __name__ == "__main__":
-    op = OptionParser()
-    op.add_option("-p", "--port", action="store", type=int, default=8080)
-    op.add_option("-l", "--log", action="store", default=None)
-    (opts, args) = op.parse_args()
-    logging.basicConfig(filename=opts.log, level=logging.INFO,
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--port', type=int, default=8080)
+    parser.add_argument('-l', '--log',  default=None)
+    args = parser.parse_args()
+
+    logging.basicConfig(filename=args.log, level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
-    server = HTTPServer(("localhost", opts.port), MainHTTPHandler)
-    logging.info("Starting server at %s" % opts.port)
+
+    server = HTTPServer(("localhost", args.port), MainHTTPHandler)
+    logging.info(f"Starting server at {args.port}")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
-    server.server_close()
+    finally:
+        server.server_close()
