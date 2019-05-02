@@ -1,4 +1,4 @@
-#Getting Started
+# Getting Started
 Works under python3
 
 To run script use: ```python api.py```
