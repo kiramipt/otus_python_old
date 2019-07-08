@@ -8,3 +8,5 @@ Code samples, study materials, etc.
 [homework_3.1](homework_3.1/README.md)
 
 [homework_7](homework_7/README.md)
+
+[homework_8](homework_8/README.md)
