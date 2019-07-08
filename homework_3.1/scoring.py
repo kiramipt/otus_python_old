@@ -3,6 +3,9 @@ import json
 
 
 def get_score(store, phone, email, birthday=None, gender=None, first_name=None, last_name=None):
+    """
+    Get user's score based on given user fields
+    """
     key_parts = [
         first_name or "",
         last_name or "",
@@ -10,6 +13,7 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
         birthday.strftime("%Y%m%d") if birthday is not None else "",
     ]
     key = "uid:" + hashlib.md5("".join(key_parts)).hexdigest()
+
     # try get from cache,
     # fallback to heavy calculation in case of cache miss
     score = store.cache_get(key) or 0
@@ -29,5 +33,8 @@ def get_score(store, phone, email, birthday=None, gender=None, first_name=None, 
 
 
 def get_interests(store, cid):
+    """
+    Get user interests
+    """
     r = store.get("i:%s" % cid)
     return json.loads(r) if r else []
