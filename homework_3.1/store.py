@@ -1,21 +1,5 @@
-import functools
-import time
 import redis
-
-
-def retry(max_retries=3, silent=True):
-    def decorator(f):
-        @functools.wraps(f)
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return f(*args, **kwargs)
-                except ConnectionError:
-                    time.sleep(1)
-            if not silent:
-                raise ConnectionError
-        return wrapper
-    return decorator
+from utils import retry
 
 
 class RedisStorage:
@@ -46,6 +30,7 @@ class RedisStorage:
 
 
 class Store:
+
     max_retries = 3
 
     def __init__(self, storage):
@@ -66,15 +51,20 @@ class Store:
 
 if __name__ == '__main__':
 
-    storage = RedisStorage()
-
-    res = storage.get('test')
-    print(res)
-
+    # storage = RedisStorage()
+    #
+    # res = storage.get('test')
+    # print(res)
+    #
     # storage.set('next', 'value', expires=10)
-    res = storage.get('next')
-    print(res)
+    # res = storage.get('next')
+    # print(res)
 
     storage = Store(RedisStorage())
-    res = storage.get('test')
-    print(res)
+    storage.cache_set('test', 'value', expires=10)
+
+    print(storage.get('test'))
+    print(storage.cache_get('test'))
+
+
+

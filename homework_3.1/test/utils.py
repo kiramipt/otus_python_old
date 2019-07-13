@@ -10,3 +10,18 @@ def cases(cases):
                 f(*new_args)
         return wrapper
     return decorator
+
+
+class MockStore:
+
+    def __init__(self):
+        self.storage = {}
+
+    def get(self, key):
+        return self.storage.get(key, None)
+
+    def cache_get(self, key):
+        return self.storage.get(key, None)
+
+    def cache_set(self, key, value, expires=0):
+        self.storage[key] = str(value)

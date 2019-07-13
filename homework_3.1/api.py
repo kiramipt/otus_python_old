@@ -8,8 +8,8 @@ import uuid
 from abc import ABCMeta, abstractmethod
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from scoring import get_interests, get_score
 from store import Store, RedisStorage
+from scoring import get_interests, get_score
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -366,7 +366,6 @@ def method_handler(request, context, store):
     """
     Function for request handling. Used for arguments validating and results returning.
     """
-
     handlers = {
         "online_score": OnlineScoreRequest,
         "clients_interests": ClientsInterestsRequest
@@ -397,6 +396,7 @@ def method_handler(request, context, store):
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
+
     router = {
         "method": method_handler
     }
